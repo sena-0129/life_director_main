@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Cormorant Garamond", serif;
+}
+
+@layer base {
+  body {
+    @apply bg-[#FDFBF7] text-[#2D2A26] font-sans antialiased;
+    font-size: 18px; /* Senior friendly base font size */
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-serif font-semibold text-[#1A1816];
+  }
+
+  h1 { @apply text-4xl md:text-5xl; }
+  h2 { @apply text-3xl md:text-4xl; }
+  h3 { @apply text-2xl md:text-3xl; }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-[#FF8C42] text-white px-8 py-4 rounded-2xl text-xl font-semibold 
+           shadow-lg shadow-orange-200 hover:bg-[#F27D26] transition-all active:scale-95
+           flex items-center justify-center gap-2;
+  }
+
+  .btn-secondary {
+    @apply bg-white text-[#2D2A26] border-2 border-[#E6E0D5] px-8 py-4 rounded-2xl 
+           text-xl font-semibold hover:bg-[#FDFBF7] transition-all active:scale-95
+           flex items-center justify-center gap-2;
+  }
+
+  .card-paper {
+    @apply bg-[#FFF9F2] border border-[#E6E0D5] rounded-[32px] p-8 shadow-xl 
+           shadow-[#E6E0D5]/20 relative overflow-hidden;
+    /* Irregular edge effect */
+    clip-path: polygon(
+      0% 2%, 2% 0%, 98% 0%, 100% 2%, 
+      100% 98%, 98% 100%, 2% 100%, 0% 98%
+    );
+  }
+
+  .input-field {
+    @apply w-full bg-white border-2 border-[#E6E0D5] rounded-xl px-4 py-3 text-lg
+           focus:border-[#FF8C42] focus:ring-2 focus:ring-[#FF8C42]/20 outline-none transition-all;
+  }
+
+  .label-text {
+    @apply block text-sm font-semibold uppercase tracking-wider text-[#8E867A] mb-2;
+  }
+
+  /* Custom scrollbar for museum */
+  .museum-scroll {
+    @apply overflow-x-auto pb-4;
+  }
+  .museum-scroll::-webkit-scrollbar {
+    height: 6px;
+  }
+  .museum-scroll::-webkit-scrollbar-track {
+    @apply bg-[#E6E0D5] rounded-full;
+  }
+  .museum-scroll::-webkit-scrollbar-thumb {
+    @apply bg-[#FF8C42] rounded-full;
+  }
+}
+
+/* Animations */
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.5); }
+  50% { transform: scaleY(1.5); }
+}
+
+.animate-wave {
+  animation: wave 1s ease-in-out infinite;
+}
+
+.glass-morphism {
+  @apply bg-white/70 backdrop-blur-md border border-white/20;
+}
+

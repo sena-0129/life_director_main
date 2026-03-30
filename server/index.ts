@@ -208,7 +208,7 @@ function buildRagPrompt(userInput: string, relatedStories: Array<{ year?: string
     '',
     `相关记忆：\n${memories || '（无）'}`,
     '',
-    '请输出：增强后的故事正文（不要输出分析过程）。',
+    '请输出：增强后的故事正文（第一人称）（不要输出分析过程）。',
   ].join('\n');
 }
 

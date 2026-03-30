@@ -233,10 +233,20 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/profiles', async (_req, res) => {
+function getUserKey(req: any) {
+  const v = req.headers['x-user-key'];
+  return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null;
+}
+
+app.get('/api/profiles', async (req, res) => {
   try {
     if (useSupabase) {
-      const { data, error } = await sb().from('profiles').select('*').order('updated_at', { ascending: false });
+      const userKey = getUserKey(req);
+      if (!userKey) {
+        res.status(400).json({ error: 'missing x-user-key' });
+        return;
+      }
+      const { data, error } = await sb().from('profiles').select('*').eq('owner_key', userKey).order('updated_at', { ascending: false });
       if (error) throw error;
       res.json((data || []).map(supabaseProfileToJson));
       return;
@@ -269,10 +279,16 @@ app.post('/api/profiles', async (req, res) => {
     }
 
     if (useSupabase) {
+      const userKey = getUserKey(req);
+      if (!userKey) {
+        res.status(400).json({ error: 'missing x-user-key' });
+        return;
+      }
       const { data, error } = await sb()
         .from('profiles')
         .insert({
           id,
+          owner_key: userKey,
           name,
           birth_date: birthDate,
           birth_place: birthPlace,
@@ -304,7 +320,12 @@ app.post('/api/profiles', async (req, res) => {
 app.get('/api/profiles/:id', async (req, res) => {
   try {
     if (useSupabase) {
-      const { data, error } = await sb().from('profiles').select('*').eq('id', req.params.id).maybeSingle();
+      const userKey = getUserKey(req);
+      if (!userKey) {
+        res.status(400).json({ error: 'missing x-user-key' });
+        return;
+      }
+      const { data, error } = await sb().from('profiles').select('*').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
       if (error) throw error;
       if (!data) {
         res.status(404).json({ error: 'not found' });
@@ -331,7 +352,12 @@ app.put('/api/profiles/:id', async (req, res) => {
     const now = Date.now();
 
     if (useSupabase) {
-      const { data: existing, error: e1 } = await sb().from('profiles').select('*').eq('id', req.params.id).maybeSingle();
+      const userKey = getUserKey(req);
+      if (!userKey) {
+        res.status(400).json({ error: 'missing x-user-key' });
+        return;
+      }
+      const { data: existing, error: e1 } = await sb().from('profiles').select('*').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
       if (e1) throw e1;
       if (!existing) {
         res.status(404).json({ error: 'not found' });
@@ -386,7 +412,12 @@ app.put('/api/profiles/:id', async (req, res) => {
 app.delete('/api/profiles/:id', async (req, res) => {
   try {
     if (useSupabase) {
-      const { error } = await sb().from('profiles').delete().eq('id', req.params.id);
+      const userKey = getUserKey(req);
+      if (!userKey) {
+        res.status(400).json({ error: 'missing x-user-key' });
+        return;
+      }
+      const { error } = await sb().from('profiles').delete().eq('id', req.params.id).eq('owner_key', userKey);
       if (error) throw error;
       res.json({ ok: true });
       return;
@@ -402,7 +433,18 @@ app.delete('/api/profiles/:id', async (req, res) => {
 app.get('/api/profiles/:id/stories', async (req, res) => {
   try {
     if (useSupabase) {
-      const { data, error } = await sb().from('stories').select('*').eq('profile_id', req.params.id).order('timestamp', { ascending: false });
+      const userKey = getUserKey(req);
+      if (!userKey) {
+        res.status(400).json({ error: 'missing x-user-key' });
+        return;
+      }
+      const { data: profile, error: e1 } = await sb().from('profiles').select('id').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
+      if (e1) throw e1;
+      if (!profile) {
+        res.status(404).json({ error: 'profile not found' });
+        return;
+      }
+      const { data, error } = await sb().from('stories').select('*').eq('profile_id', req.params.id).eq('owner_key', userKey).order('timestamp', { ascending: false });
       if (error) throw error;
       res.json((data || []).map(supabaseStoryToJson));
       return;
@@ -435,7 +477,12 @@ app.post('/api/profiles/:id/stories', async (req, res) => {
 
   try {
     if (useSupabase) {
-      const { data: profile, error: e1 } = await sb().from('profiles').select('id').eq('id', req.params.id).maybeSingle();
+      const userKey = getUserKey(req);
+      if (!userKey) {
+        res.status(400).json({ error: 'missing x-user-key' });
+        return;
+      }
+      const { data: profile, error: e1 } = await sb().from('profiles').select('id').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
       if (e1) throw e1;
       if (!profile) {
         res.status(404).json({ error: 'profile not found' });
@@ -445,6 +492,7 @@ app.post('/api/profiles/:id/stories', async (req, res) => {
       const embedding = await dashscopeEmbedding(content);
       const payload: any = {
         profile_id: req.params.id,
+        owner_key: userKey,
         title,
         stage,
         year,
@@ -491,7 +539,13 @@ app.post('/api/profiles/:id/stories', async (req, res) => {
 app.get('/api/stories/:id', async (req, res) => {
   try {
     if (useSupabase) {
-      const { data, error } = await sb().from('stories').select('*').eq('id', Number(req.params.id)).maybeSingle();
+      const userKey = getUserKey(req);
+      if (!userKey) {
+        res.status(400).json({ error: 'missing x-user-key' });
+        return;
+      }
+      const id = Number(req.params.id);
+      const { data, error } = await sb().from('stories').select('*').eq('id', id).eq('owner_key', userKey).maybeSingle();
       if (error) throw error;
       if (!data) {
         res.status(404).json({ error: 'not found' });
@@ -519,7 +573,12 @@ app.put('/api/stories/:id', async (req, res) => {
     const now = Date.now();
 
     if (useSupabase) {
-      const { data: existing, error: e1 } = await sb().from('stories').select('*').eq('id', id).maybeSingle();
+      const userKey = getUserKey(req);
+      if (!userKey) {
+        res.status(400).json({ error: 'missing x-user-key' });
+        return;
+      }
+      const { data: existing, error: e1 } = await sb().from('stories').select('*').eq('id', id).eq('owner_key', userKey).maybeSingle();
       if (e1) throw e1;
       if (!existing) {
         res.status(404).json({ error: 'not found' });
@@ -589,7 +648,12 @@ app.delete('/api/stories/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (useSupabase) {
-      const { error } = await sb().from('stories').delete().eq('id', id);
+      const userKey = getUserKey(req);
+      if (!userKey) {
+        res.status(400).json({ error: 'missing x-user-key' });
+        return;
+      }
+      const { error } = await sb().from('stories').delete().eq('id', id).eq('owner_key', userKey);
       if (error) throw error;
       res.json({ ok: true });
       return;
@@ -609,6 +673,12 @@ app.post('/api/rag/run', async (req, res) => {
       return;
     }
 
+    const userKey = getUserKey(req);
+    if (!userKey) {
+      res.status(400).json({ error: 'missing x-user-key' });
+      return;
+    }
+
     const userId = String(req.body?.userId || '');
     const userInput = String(req.body?.userInput || '');
     const topK = Number(req.body?.topK || 3);
@@ -623,10 +693,18 @@ app.post('/api/rag/run', async (req, res) => {
       return;
     }
 
+    const { data: profile, error: e1 } = await sb().from('profiles').select('id').eq('id', userId).eq('owner_key', userKey).maybeSingle();
+    if (e1) throw e1;
+    if (!profile) {
+      res.status(404).json({ error: 'profile not found' });
+      return;
+    }
+
     const { data: rows, error } = await sb()
       .from('stories')
       .select('id, year, tags, content, embedding')
       .eq('profile_id', userId)
+      .eq('owner_key', userKey)
       .order('created_at', { ascending: false });
     if (error) throw error;
 

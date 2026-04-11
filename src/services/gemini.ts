@@ -1,7 +1,7 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '';
-const useBackend = import.meta.env.VITE_USE_BACKEND === 'true' || apiBaseUrl.length > 0;
+const apiBaseUrl = import.meta.env.DEV ? (import.meta.env.VITE_API_BASE_URL || '') : '';
+const useBackend = import.meta.env.VITE_USE_BACKEND === 'true' || (import.meta.env.DEV && apiBaseUrl.length > 0);
 
 function apiUrl(path: string) {
   return `${apiBaseUrl}${path}`;
@@ -11,6 +11,8 @@ function backendHeaders() {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   const token = import.meta.env.VITE_BACKEND_TOKEN;
   if (token) headers.authorization = `Bearer ${token}`;
+  const userKey = localStorage.getItem('life_director_user_key_v1');
+  if (userKey) headers['x-user-key'] = userKey;
   return headers;
 }
 
@@ -92,10 +94,19 @@ export async function generateLifeVideo(prompt: string, imageBase64?: string, as
     const data = await res.json();
     const videoUrl = data.videoUrl as string | undefined;
     if (!videoUrl) return null;
-    const download = await fetch(apiUrl(videoUrl));
-    if (!download.ok) throw new Error(`Video download failed: ${download.status}`);
-    const blob = await download.blob();
-    return URL.createObjectURL(blob);
+
+    const startedAt = Date.now();
+    while (true) {
+      const download = await fetch(apiUrl(videoUrl), { headers: backendHeaders() });
+      if (download.status === 202) {
+        if (Date.now() - startedAt > 25 * 60 * 1000) throw new Error('Video generation timeout');
+        await new Promise((r) => setTimeout(r, 5000));
+        continue;
+      }
+      if (!download.ok) throw new Error(`Video download failed: ${download.status}`);
+      const blob = await download.blob();
+      return URL.createObjectURL(blob);
+    }
   }
 
   if (!window.aistudio) {

@@ -12,6 +12,7 @@ export function VideoStudioPage({ stories, initialSelectedId, onBack }: { storie
   const [isGenerating, setIsGenerating] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false);
+  const [errorText, setErrorText] = useState<string | null>(null);
 
   const toggleSelection = (id: number) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -20,6 +21,7 @@ export function VideoStudioPage({ stories, initialSelectedId, onBack }: { storie
   const handleGenerate = async () => {
     if (selectedIds.length === 0) return;
     setIsGenerating(true);
+    setErrorText(null);
     
     const selectedStories = stories.filter(s => selectedIds.includes(s.id));
     const combinedContent = selectedStories.map(s => s.content).join('\n\n');
@@ -29,9 +31,8 @@ export function VideoStudioPage({ stories, initialSelectedId, onBack }: { storie
       const url = await generateLifeVideo(combinedContent, firstCover, "9:16");
       setVideoUrl(url);
     } catch (e) {
-      console.error(e);
-      // Mock success for demo if api fails
-      setTimeout(() => setVideoUrl('https://2mk56ovd6z.ucarecd.net/3bc8803d-e388-4843-ace0-76b7ba1d868e/'), 3000);
+      const msg = e instanceof Error ? e.message : String(e);
+      setErrorText(msg || '生成失败');
     }
     
     setIsGenerating(false);
@@ -98,6 +99,11 @@ export function VideoStudioPage({ stories, initialSelectedId, onBack }: { storie
       </div>
 
       <div className="flex-1 overflow-y-auto p-6 pb-48 space-y-8">
+        {errorText && (
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-2xl p-4">
+            {errorText}
+          </div>
+        )}
         {/* Preview Area */}
         <div className="card-paper p-6 bg-white">
           <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><MonitorPlay size={20} className="text-[#FF8C42]" /> 视频预览</h3>

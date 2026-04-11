@@ -1,5 +1,7 @@
 import express from 'express';
 import { createClient } from '@supabase/supabase-js';
+import { randomUUID } from 'node:crypto';
+import { arkChatCompletion, arkCreateVideoTask, arkExtractVideoUrl, arkGetVideoTask } from '../server/ark';
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));
@@ -32,6 +34,7 @@ function requireEnv(name: string) {
   return v;
 }
 
+
 function getDashscopeConfig() {
   const apiKey = process.env.DASHSCOPE_API_KEY;
   const baseUrl = process.env.DASHSCOPE_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
@@ -39,6 +42,14 @@ function getDashscopeConfig() {
   const embeddingDimensions = process.env.DASHSCOPE_EMBEDDING_DIMENSIONS ? Number(process.env.DASHSCOPE_EMBEDDING_DIMENSIONS) : 1024;
   const chatModel = process.env.DASHSCOPE_CHAT_MODEL || 'qwen3.5-plus';
   return { apiKey, baseUrl, embeddingModel, embeddingDimensions, chatModel };
+}
+
+function getArkConfig() {
+  const apiKey = process.env.ARK_API_KEY;
+  const baseUrl = process.env.ARK_BASE_URL || 'https://ark.cn-beijing.volces.com/api/v3';
+  const scriptModel = process.env.ARK_SCRIPT_MODEL || 'doubao-seed-2-0-lite-260215';
+  const videoModel = process.env.ARK_VIDEO_MODEL || 'doubao-seedance-1-5-pro-251215';
+  return { apiKey, baseUrl, scriptModel, videoModel };
 }
 
 function toVectorLiteral(embedding: number[]) {
@@ -86,9 +97,11 @@ function buildRagPrompt(userInput: string, relatedStories: Array<{ year?: string
 
   return [
     '你是一位“人生故事整理助手”，语气温暖、有陪伴感，但绝不编造事实。',
-    '任务：把用户刚刚的输入整理成一段更清晰、更有叙事性的回忆文字，并在不改变事实的前提下，结合下面提供的“相关记忆”补全语境（仅限用户曾提到的内容）。',
+    '任务：把用户刚刚的输入整理成一段更清晰、更有叙事性的第一人称回忆文字。在不改变事实的前提下，结合下面提供的“相关记忆”补全语境（仅限用户曾提到的内容）。',
     '要求：',
-    '1) 不要凭空添加人物、地点、事件细节；不确定就保持模糊或用提问方式提示。',
+    '1) 必须全程使用第一人称（我/我们）叙述；禁止出现“你/您/用户”作为叙事主体。',
+    '2) 不要凭空添加人物、地点、事件细节；不确定就保持模糊或用提问方式提示。',
+    '3) 如果用户输入本身是第二人称表达，请将叙事主体改写为第一人称，不要改变事实。',
     '2) 输出用简洁中文，分段清晰（2-4段）。',
     '3) 如果相关记忆与当前输入有冲突，优先以当前输入为准，并用一句温和的话提示可能的差异。',
     '',
@@ -96,7 +109,7 @@ function buildRagPrompt(userInput: string, relatedStories: Array<{ year?: string
     '',
     `相关记忆：\n${memories || '（无）'}`,
     '',
-    '请输出：增强后的故事正文（不要输出分析过程）。',
+    '请输出：增强后的故事正文（第一人称）（不要输出分析过程）。',
   ].join('\n');
 }
 
@@ -136,7 +149,7 @@ async function dashscopeChat(prompt: string) {
     body: JSON.stringify({
       model: chatModel,
       messages: [
-        { role: 'system', content: '你是一位温暖、克制、不会编造事实的人生故事整理助手。' },
+        { role: 'system', content: '你是一位温暖、克制、不会编造事实的人生故事整理助手。你输出的故事必须全程使用第一人称（我/我们）叙述，禁止用“你/您”把读者当作当事人。' },
         { role: 'user', content: prompt },
       ],
       temperature: 0.6,
@@ -149,6 +162,8 @@ async function dashscopeChat(prompt: string) {
   const data = await resp.json();
   return String(data?.choices?.[0]?.message?.content || '').trim();
 }
+
+
 
 function createSupabaseAdminClient() {
   const url = requireEnv('SUPABASE_URL');
@@ -537,6 +552,132 @@ app.post('/api/rag/run', async (req, res) => {
         score: s.score,
       })),
     });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'internal error' });
+  }
+});
+
+app.post('/api/ai/video', async (req, res) => {
+  try {
+    const prompt = String(req.body?.prompt || '');
+    const aspectRatio = (req.body?.aspectRatio || '16:9') as '16:9' | '9:16';
+    const imageDataUrl = req.body?.imageDataUrl ? String(req.body.imageDataUrl) : undefined;
+    if (!prompt) {
+      res.status(400).json({ error: 'prompt is required' });
+      return;
+    }
+
+    const ark = getArkConfig();
+    if (!ark.apiKey) throw new Error('Missing env: ARK_API_KEY');
+
+    const scriptPrompt = [
+      '你是一位纪录片编导。请把“用户故事素材”改写成一段用于文生视频的中文提示词。',
+      '要求：',
+      '1) 怀旧纪实风格，温情但克制。',
+      '2) 只输出提示词正文，不要输出标题、解释、JSON。',
+      '3) 重点写画面、人物动作、镜头语言、光线、年代氛围；避免抽象说教。',
+      '4) 不要出现“你/您”。',
+      '',
+      `用户故事素材：\n${prompt}`,
+    ].join('\n');
+
+    const script = await arkChatCompletion({
+      model: ark.scriptModel,
+      messages: [
+        { role: 'system', content: '你是专业的视频提示词编导。' },
+        { role: 'user', content: scriptPrompt },
+      ],
+      temperature: 0.4,
+    });
+
+    const t2vPrompt = `${script} --resolution 720p --duration 8 --ratio ${aspectRatio}`;
+    const task = await arkCreateVideoTask({ model: ark.videoModel, prompt: t2vPrompt });
+    const taskId = String((task as any)?.id || '');
+    if (!taskId) throw new Error('ark task id missing');
+
+    const id = randomUUID();
+    const { error: insertError } = await supabase.from('ai_videos').insert({
+      id,
+      bucket: 'videos',
+      object_path: '',
+      ark_task_id: taskId,
+      status: String((task as any)?.status || ''),
+      prompt: t2vPrompt,
+      script,
+    });
+    if (insertError) throw insertError;
+
+    res.json({ videoUrl: `/api/ai/video/${id}` });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'internal error' });
+  }
+});
+
+app.get('/api/ai/video/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('ai_videos').select('*').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!data) {
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+    if (data.object_path && String(data.object_path).length > 0) {
+      const { data: signed, error: signError } = await supabase
+        .storage
+        .from(String(data.bucket))
+        .createSignedUrl(String(data.object_path), 60 * 10);
+      if (signError) throw signError;
+      res.redirect(signed.signedUrl);
+      return;
+    }
+
+    const ark = getArkConfig();
+    if (!ark.apiKey) throw new Error('Missing env: ARK_API_KEY');
+
+    const taskId = String(data.ark_task_id || '');
+    if (!taskId) {
+      res.status(500).json({ error: 'missing task id' });
+      return;
+    }
+
+    const task = await arkGetVideoTask(taskId);
+    const status = String((task as any)?.status || '');
+    if (status !== String(data.status || '')) {
+      await supabase.from('ai_videos').update({ status }).eq('id', req.params.id);
+    }
+
+    if (status === 'failed') {
+      res.status(500).json({ error: 'video generation failed' });
+      return;
+    }
+    if (status !== 'succeeded') {
+      res.status(202).json({ status });
+      return;
+    }
+
+    const videoSourceUrl = arkExtractVideoUrl(task);
+    if (!videoSourceUrl) {
+      res.status(500).json({ error: 'video url missing' });
+      return;
+    }
+
+    const dl = await fetch(videoSourceUrl);
+    if (!dl.ok) throw new Error(`video download failed: ${dl.status}`);
+    const buf = Buffer.from(await dl.arrayBuffer());
+
+    const bucket = 'videos';
+    const objectPath = `${req.params.id}.mp4`;
+    const { error: uploadError } = await supabase.storage.from(bucket).upload(objectPath, buf, {
+      contentType: 'video/mp4',
+      upsert: true,
+    });
+    if (uploadError) throw uploadError;
+
+    await supabase.from('ai_videos').update({ bucket, object_path: objectPath }).eq('id', req.params.id);
+
+    const { data: signed, error: signError } = await supabase.storage.from(bucket).createSignedUrl(objectPath, 60 * 10);
+    if (signError) throw signError;
+    res.redirect(signed.signedUrl);
   } catch (e: any) {
     res.status(500).json({ error: e?.message || 'internal error' });
   }

@@ -87,7 +87,7 @@ export async function aiVideoBuffer(params: {
   aspectRatio: '16:9' | '9:16';
 }) {
   const apiKey = getGenAiKeyForMedia();
-  if (!apiKey) throw new Error('Missing env: API_KEY');
+  if (!apiKey) throw new Error('Missing env: GEMINI_API_KEY (or API_KEY for video)');
 
   const ai = new GoogleGenAI({ apiKey });
 

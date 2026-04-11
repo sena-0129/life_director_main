@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { loadEnv } from './env';
 import { openDb, rowToProfile, rowToStory } from './db';
-import { aiChat, aiTts, aiVideoBuffer, aiVideoToDisk } from './ai';
+import { aiChat, aiTts, aiVideoToDisk } from './ai';
+import { arkChatCompletion, arkCreateVideoTask, arkExtractVideoUrl, arkGetVideoTask } from './ark';
 import { ensureDir, insertUpload, sanitizeFileName, sha256Buffer, sha256File, uploadRowToJson } from './uploads';
 import { createSupabaseAdminClient } from './supabase';
 
@@ -69,7 +70,7 @@ async function dashscopeChat(prompt: string) {
     body: JSON.stringify({
       model: chatModel,
       messages: [
-        { role: 'system', content: '你是一位温暖、克制、不会编造事实的人生故事整理助手。' },
+        { role: 'system', content: '你是一位温暖、克制、不会编造事实的人生故事整理助手。你输出的故事必须全程使用第一人称（我/我们）叙述，禁止用“你/您”把读者当作当事人。' },
         { role: 'user', content: prompt },
       ],
       temperature: 0.6,
@@ -788,21 +789,44 @@ app.post('/api/ai/video', async (req, res) => {
     }
 
     if (useSupabase) {
-      const buf = await aiVideoBuffer({ prompt, imageDataUrl, aspectRatio });
-      if (!buf) {
-        res.json({ videoUrl: null });
-        return;
-      }
-      const id = randomUUID();
-      const bucket = 'videos';
-      const objectPath = `${id}.mp4`;
-      const { error: uploadError } = await sb().storage.from(bucket).upload(objectPath, buf, {
-        contentType: 'video/mp4',
-        upsert: false,
-      });
-      if (uploadError) throw uploadError;
+      const scriptModel = process.env.ARK_SCRIPT_MODEL || 'doubao-seed-2-0-lite-260215';
+      const videoModel = process.env.ARK_VIDEO_MODEL || 'doubao-seedance-1-5-pro-251215';
 
-      const { error: insertError } = await sb().from('ai_videos').insert({ id, bucket, object_path: objectPath });
+      const scriptPrompt = [
+        '你是一位纪录片编导。请把“用户故事素材”改写成一段用于文生视频的中文提示词。',
+        '要求：',
+        '1) 怀旧纪实风格，温情但克制。',
+        '2) 只输出提示词正文，不要输出标题、解释、JSON。',
+        '3) 重点写画面、人物动作、镜头语言、光线、年代氛围；避免抽象说教。',
+        '4) 不要出现“你/您”。',
+        '',
+        `用户故事素材：\n${prompt}`,
+      ].join('\n');
+
+      const script = await arkChatCompletion({
+        model: scriptModel,
+        messages: [
+          { role: 'system', content: '你是专业的视频提示词编导。' },
+          { role: 'user', content: scriptPrompt },
+        ],
+        temperature: 0.4,
+      });
+
+      const t2vPrompt = `${script} --resolution 720p --duration 8 --ratio ${aspectRatio}`;
+      const task = await arkCreateVideoTask({ model: videoModel, prompt: t2vPrompt });
+      const taskId = String(task?.id || '');
+      if (!taskId) throw new Error('ark task id missing');
+
+      const id = randomUUID();
+      const { error: insertError } = await sb().from('ai_videos').insert({
+        id,
+        bucket: 'videos',
+        object_path: '',
+        ark_task_id: taskId,
+        status: String(task?.status || ''),
+        prompt: t2vPrompt,
+        script,
+      });
       if (insertError) throw insertError;
 
       res.json({ videoUrl: `/api/ai/video/${id}` });
@@ -829,7 +853,56 @@ app.get('/api/ai/video/:id', async (req, res) => {
         res.status(404).json({ error: 'not found' });
         return;
       }
-      const { data: signed, error: signError } = await sb().storage.from(String(data.bucket)).createSignedUrl(String(data.object_path), 60 * 10);
+
+      if (data.object_path && String(data.object_path).length > 0) {
+        const { data: signed, error: signError } = await sb().storage.from(String(data.bucket)).createSignedUrl(String(data.object_path), 60 * 10);
+        if (signError) throw signError;
+        res.redirect(signed.signedUrl);
+        return;
+      }
+
+      const taskId = String(data.ark_task_id || '');
+      if (!taskId) {
+        res.status(500).json({ error: 'missing task id' });
+        return;
+      }
+
+      const task = await arkGetVideoTask(taskId);
+      const status = String(task?.status || '');
+      if (status !== String(data.status || '')) {
+        await sb().from('ai_videos').update({ status }).eq('id', req.params.id);
+      }
+
+      if (status === 'failed') {
+        res.status(500).json({ error: 'video generation failed' });
+        return;
+      }
+      if (status !== 'succeeded') {
+        res.status(202).json({ status });
+        return;
+      }
+
+      const videoSourceUrl = arkExtractVideoUrl(task);
+      if (!videoSourceUrl) {
+        res.status(500).json({ error: 'video url missing' });
+        return;
+      }
+
+      const dl = await fetch(videoSourceUrl);
+      if (!dl.ok) throw new Error(`video download failed: ${dl.status}`);
+      const buf = Buffer.from(await dl.arrayBuffer());
+
+      const bucket = 'videos';
+      const objectPath = `${req.params.id}.mp4`;
+      const { error: uploadError } = await sb().storage.from(bucket).upload(objectPath, buf, {
+        contentType: 'video/mp4',
+        upsert: true,
+      });
+      if (uploadError) throw uploadError;
+
+      await sb().from('ai_videos').update({ bucket, object_path: objectPath }).eq('id', req.params.id);
+
+      const { data: signed, error: signError } = await sb().storage.from(bucket).createSignedUrl(objectPath, 60 * 10);
       if (signError) throw signError;
       res.redirect(signed.signedUrl);
       return;

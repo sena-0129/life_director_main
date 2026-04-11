@@ -17,19 +17,9 @@ export type RagRunResponse = {
   };
 };
 
+import { getOrCreateUserKey } from '../utils/userKey';
+
 const apiBaseUrl = import.meta.env.DEV ? (import.meta.env.VITE_API_BASE_URL || '') : '';
-
-const USER_KEY_STORAGE_KEY = 'life_director_user_key_v1';
-
-function getOrCreateUserKey() {
-  const existing = localStorage.getItem(USER_KEY_STORAGE_KEY);
-  if (existing) return existing;
-  const next = (globalThis.crypto && 'randomUUID' in globalThis.crypto)
-    ? (globalThis.crypto as Crypto).randomUUID()
-    : `u_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-  localStorage.setItem(USER_KEY_STORAGE_KEY, next);
-  return next;
-}
 
 function apiUrl(path: string) {
   return `${apiBaseUrl}${path}`;

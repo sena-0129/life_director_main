@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, Download, MonitorPlay, Film, Check, Video as VideoIcon, X } from 'lucide-react';
 import { LifeStory } from '../types';
 import { generateLifeVideo } from '../services/gemini';
+import { downloadVideoObjectUrl, listMyVideos, MyVideoItem } from '../services/videos';
 import { cn } from '../utils/cn';
 
 export function VideoStudioPage({ stories, initialSelectedId, onBack }: { stories: LifeStory[], initialSelectedId: number | null, onBack: () => void }) {
@@ -13,6 +14,25 @@ export function VideoStudioPage({ stories, initialSelectedId, onBack }: { storie
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [myVideos, setMyVideos] = useState<MyVideoItem[]>([]);
+  const [isLoadingMyVideos, setIsLoadingMyVideos] = useState(false);
+
+  const refreshMyVideos = async () => {
+    if (isLoadingMyVideos) return;
+    setIsLoadingMyVideos(true);
+    try {
+      const r = await listMyVideos(30);
+      setMyVideos(r.items || []);
+    } catch {
+      setMyVideos([]);
+    } finally {
+      setIsLoadingMyVideos(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshMyVideos();
+  }, []);
 
   const toggleSelection = (id: number) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -30,6 +50,7 @@ export function VideoStudioPage({ stories, initialSelectedId, onBack }: { storie
     try {
       const url = await generateLifeVideo(combinedContent, firstCover, "9:16");
       setVideoUrl(url);
+      await refreshMyVideos();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setErrorText(msg || '生成失败');
@@ -104,6 +125,50 @@ export function VideoStudioPage({ stories, initialSelectedId, onBack }: { storie
             {errorText}
           </div>
         )}
+
+        <div className="card-paper p-6 bg-white">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-lg font-medium">我的视频</h3>
+              <p className="text-sm text-[#8E867A]">生成后可在这里随时找回</p>
+            </div>
+            <button className="btn-secondary" onClick={() => { void refreshMyVideos(); }} disabled={isLoadingMyVideos}>
+              {isLoadingMyVideos ? '刷新中...' : '刷新'}
+            </button>
+          </div>
+
+          {myVideos.length === 0 ? (
+            <div className="text-sm text-[#8E867A]">暂无视频</div>
+          ) : (
+            <div className="space-y-3">
+              {myVideos.map((v) => (
+                <div key={v.id} className="flex items-center justify-between bg-white/60 border border-[#E6E0D5] rounded-xl p-3">
+                  <div className="min-w-0">
+                    <div className="text-sm text-[#1A1816] truncate">{v.id}</div>
+                    <div className="text-xs text-[#8E867A]">{v.createdAt} · {v.status || 'unknown'}{v.hasFile ? ' · 已保存' : ''}</div>
+                  </div>
+                  <button
+                    className="btn-primary"
+                    onClick={async () => {
+                      setErrorText(null);
+                      try {
+                        const url = await downloadVideoObjectUrl(v.id);
+                        setVideoUrl(url);
+                        await refreshMyVideos();
+                      } catch (e) {
+                        const msg = e instanceof Error ? e.message : String(e);
+                        setErrorText(msg || '获取视频失败');
+                      }
+                    }}
+                  >
+                    播放/下载
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Preview Area */}
         <div className="card-paper p-6 bg-white">
           <h3 className="text-lg font-medium mb-4 flex items-center gap-2"><MonitorPlay size={20} className="text-[#FF8C42]" /> 视频预览</h3>

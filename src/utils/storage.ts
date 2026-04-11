@@ -1,23 +1,12 @@
 import { LifeProfile, LifeStory } from '../types';
+import { getOrCreateUserKey } from './userKey';
 
 const PROFILES_KEY = 'life_director_profiles';
 const ACTIVE_PROFILE_ID_KEY = 'life_director_active_id';
 const STORIES_KEY = 'life_director_stories';
 
-const USER_KEY_STORAGE_KEY = 'life_director_user_key_v1';
-
 const apiBaseUrl = import.meta.env.DEV ? (import.meta.env.VITE_API_BASE_URL || '') : '';
 const useBackend = import.meta.env.VITE_USE_BACKEND === 'true' || (import.meta.env.DEV && apiBaseUrl.length > 0);
-
-function getOrCreateUserKey() {
-  const existing = localStorage.getItem(USER_KEY_STORAGE_KEY);
-  if (existing) return existing;
-  const next = (globalThis.crypto && 'randomUUID' in globalThis.crypto)
-    ? (globalThis.crypto as Crypto).randomUUID()
-    : `u_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-  localStorage.setItem(USER_KEY_STORAGE_KEY, next);
-  return next;
-}
 
 function apiUrl(path: string) {
   return `${apiBaseUrl}${path}`;

@@ -1,4 +1,5 @@
 import { GoogleGenAI, Modality } from "@google/genai";
+import { getOrCreateUserKey } from '../utils/userKey';
 
 const apiBaseUrl = import.meta.env.DEV ? (import.meta.env.VITE_API_BASE_URL || '') : '';
 const useBackend = import.meta.env.VITE_USE_BACKEND === 'true' || (import.meta.env.DEV && apiBaseUrl.length > 0);
@@ -11,8 +12,7 @@ function backendHeaders() {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   const token = import.meta.env.VITE_BACKEND_TOKEN;
   if (token) headers.authorization = `Bearer ${token}`;
-  const userKey = localStorage.getItem('life_director_user_key_v1');
-  if (userKey) headers['x-user-key'] = userKey;
+  headers['x-user-key'] = getOrCreateUserKey();
   return headers;
 }
 

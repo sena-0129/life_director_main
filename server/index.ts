@@ -239,6 +239,52 @@ function getUserKey(req: any) {
   return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null;
 }
 
+const arkVideoFinalizeInFlight = new Set<string>();
+
+async function finalizeArkVideoToSupabase(params: { id: string; ownerKey: string; taskId: string }) {
+  if (arkVideoFinalizeInFlight.has(params.id)) return;
+  arkVideoFinalizeInFlight.add(params.id);
+  try {
+    while (true) {
+      const { data: row, error: e0 } = await sb().from('ai_videos').select('*').eq('id', params.id).eq('owner_key', params.ownerKey).maybeSingle();
+      if (e0) throw e0;
+      if (!row) return;
+      if (row.object_path && String(row.object_path).length > 0) return;
+
+      const task = await arkGetVideoTask(params.taskId);
+      const status = String(task?.status || '');
+      if (status && status !== String(row.status || '')) {
+        await sb().from('ai_videos').update({ status }).eq('id', params.id);
+      }
+
+      if (status === 'failed') return;
+      if (status !== 'succeeded') {
+        await new Promise((r) => setTimeout(r, 5000));
+        continue;
+      }
+
+      const videoSourceUrl = arkExtractVideoUrl(task);
+      if (!videoSourceUrl) return;
+      const dl = await fetch(videoSourceUrl);
+      if (!dl.ok) throw new Error(`video download failed: ${dl.status}`);
+      const buf = Buffer.from(await dl.arrayBuffer());
+
+      const bucket = 'videos';
+      const objectPath = `${params.id}.mp4`;
+      const { error: uploadError } = await sb().storage.from(bucket).upload(objectPath, buf, {
+        contentType: 'video/mp4',
+        upsert: true,
+      });
+      if (uploadError) throw uploadError;
+
+      await sb().from('ai_videos').update({ bucket, object_path: objectPath }).eq('id', params.id);
+      return;
+    }
+  } finally {
+    arkVideoFinalizeInFlight.delete(params.id);
+  }
+}
+
 app.get('/api/profiles', async (req, res) => {
   try {
     if (useSupabase) {
@@ -778,8 +824,49 @@ app.post('/api/ai/tts', async (req, res) => {
   }
 });
 
+app.get('/api/ai/videos', async (req, res) => {
+  try {
+    if (!useSupabase) {
+      res.json({ items: [] });
+      return;
+    }
+
+    const userKey = getUserKey(req);
+    if (!userKey) {
+      res.status(400).json({ error: 'missing x-user-key' });
+      return;
+    }
+
+    const limit = Math.max(1, Math.min(100, Number(req.query?.limit || 30)));
+    const { data, error } = await sb()
+      .from('ai_videos')
+      .select('id, status, created_at, bucket, object_path')
+      .eq('owner_key', userKey)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+
+    res.json({
+      items: (data || []).map((r: any) => ({
+        id: String(r.id),
+        status: String(r.status || ''),
+        createdAt: String(r.created_at || ''),
+        hasFile: Boolean(r.object_path && String(r.object_path).length > 0),
+        videoUrl: `/api/ai/video/${String(r.id)}`,
+      })),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'internal error' });
+  }
+});
+
 app.post('/api/ai/video', async (req, res) => {
   try {
+    const userKey = useSupabase ? getUserKey(req) : null;
+    if (useSupabase && !userKey) {
+      res.status(400).json({ error: 'missing x-user-key' });
+      return;
+    }
     const prompt = String(req.body?.prompt || '');
     const aspectRatio = (req.body?.aspectRatio || '16:9') as '16:9' | '9:16';
     const imageDataUrl = req.body?.imageDataUrl ? String(req.body.imageDataUrl) : undefined;
@@ -820,6 +907,7 @@ app.post('/api/ai/video', async (req, res) => {
       const id = randomUUID();
       const { error: insertError } = await sb().from('ai_videos').insert({
         id,
+        owner_key: userKey,
         bucket: 'videos',
         object_path: '',
         ark_task_id: taskId,
@@ -828,6 +916,8 @@ app.post('/api/ai/video', async (req, res) => {
         script,
       });
       if (insertError) throw insertError;
+
+      void finalizeArkVideoToSupabase({ id, ownerKey: userKey!, taskId });
 
       res.json({ videoUrl: `/api/ai/video/${id}` });
       return;
@@ -847,7 +937,12 @@ app.post('/api/ai/video', async (req, res) => {
 app.get('/api/ai/video/:id', async (req, res) => {
   try {
     if (useSupabase) {
-      const { data, error } = await sb().from('ai_videos').select('*').eq('id', req.params.id).maybeSingle();
+      const userKey = getUserKey(req);
+      if (!userKey) {
+        res.status(400).json({ error: 'missing x-user-key' });
+        return;
+      }
+      const { data, error } = await sb().from('ai_videos').select('*').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
       if (error) throw error;
       if (!data) {
         res.status(404).json({ error: 'not found' });

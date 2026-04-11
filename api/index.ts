@@ -557,8 +557,44 @@ app.post('/api/rag/run', async (req, res) => {
   }
 });
 
+app.get('/api/ai/videos', async (req, res) => {
+  try {
+    const userKey = getUserKey(req);
+    if (!userKey) {
+      res.status(400).json({ error: 'missing x-user-key' });
+      return;
+    }
+
+    const limit = Math.max(1, Math.min(100, Number(req.query?.limit || 30)));
+    const { data, error } = await supabase
+      .from('ai_videos')
+      .select('id, status, created_at, bucket, object_path')
+      .eq('owner_key', userKey)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+
+    res.json({
+      items: (data || []).map((r: any) => ({
+        id: String(r.id),
+        status: String(r.status || ''),
+        createdAt: String(r.created_at || ''),
+        hasFile: Boolean(r.object_path && String(r.object_path).length > 0),
+        videoUrl: `/api/ai/video/${String(r.id)}`,
+      })),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'internal error' });
+  }
+});
+
 app.post('/api/ai/video', async (req, res) => {
   try {
+    const userKey = getUserKey(req);
+    if (!userKey) {
+      res.status(400).json({ error: 'missing x-user-key' });
+      return;
+    }
     const prompt = String(req.body?.prompt || '');
     const aspectRatio = (req.body?.aspectRatio || '16:9') as '16:9' | '9:16';
     const imageDataUrl = req.body?.imageDataUrl ? String(req.body.imageDataUrl) : undefined;
@@ -598,6 +634,7 @@ app.post('/api/ai/video', async (req, res) => {
     const id = randomUUID();
     const { error: insertError } = await supabase.from('ai_videos').insert({
       id,
+      owner_key: userKey,
       bucket: 'videos',
       object_path: '',
       ark_task_id: taskId,
@@ -615,7 +652,12 @@ app.post('/api/ai/video', async (req, res) => {
 
 app.get('/api/ai/video/:id', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('ai_videos').select('*').eq('id', req.params.id).maybeSingle();
+    const userKey = getUserKey(req);
+    if (!userKey) {
+      res.status(400).json({ error: 'missing x-user-key' });
+      return;
+    }
+    const { data, error } = await supabase.from('ai_videos').select('*').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
     if (error) throw error;
     if (!data) {
       res.status(404).json({ error: 'not found' });

@@ -515,7 +515,7 @@ app.post('/api/rag/run', async (req, res) => {
       return;
     }
 
-    const { data: rows, error } = await supabase
+    const { data: rows, error } = await sb()
       .from('stories')
       .select('id, year, tags, content, embedding, created_at')
       .eq('profile_id', userId)
@@ -573,7 +573,7 @@ app.get('/api/ai/videos', async (req, res) => {
     }
 
     const limit = Math.max(1, Math.min(100, Number(req.query?.limit || 30)));
-    const { data, error } = await supabase
+    const { data, error } = await sb()
       .from('ai_videos')
       .select('id, status, created_at, bucket, object_path')
       .eq('owner_key', userKey)
@@ -671,7 +671,7 @@ app.get('/api/ai/video/:id', async (req, res) => {
       return;
     }
     if (data.object_path && String(data.object_path).length > 0) {
-      const { data: signed, error: signError } = await supabase
+      const { data: signed, error: signError } = await sb()
         .storage
         .from(String(data.bucket))
         .createSignedUrl(String(data.object_path), 60 * 10);

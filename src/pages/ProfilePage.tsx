@@ -25,6 +25,8 @@ export function ProfilePage({ onSave, initialData, onBack, onSwitch, profiles, o
   });
 
   const [cityInput, setCityInput] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [errorText, setErrorText] = useState<string | null>(null);
 
   const addCity = () => {
     if (cityInput && !formData.cities.includes(cityInput)) {
@@ -175,12 +177,30 @@ export function ProfilePage({ onSave, initialData, onBack, onSwitch, profiles, o
           />
         </div>
 
+        {errorText && (
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-2xl p-4">
+            {errorText}
+          </div>
+        )}
+
         <button 
-          onClick={() => onSave(formData)} 
-          disabled={!formData.name || !formData.birthDate}
+          onClick={async () => {
+            if (isSaving) return;
+            setIsSaving(true);
+            setErrorText(null);
+            try {
+              await onSave(formData);
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              setErrorText(msg || '保存失败，请稍后重试');
+            } finally {
+              setIsSaving(false);
+            }
+          }} 
+          disabled={isSaving || !formData.name || !formData.birthDate}
           className="btn-primary w-full mt-8 disabled:opacity-50"
         >
-          保存档案
+          {isSaving ? '保存中...' : '保存档案'}
         </button>
       </div>
     </motion.div>

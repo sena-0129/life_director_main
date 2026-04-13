@@ -77,15 +77,34 @@ export const storage = {
       return profile;
     }
 
-    const check = await fetch(apiUrl(`/api/profiles/${encodeURIComponent(profile.id)}`), { headers: backendHeaders() });
+    let check: Response;
+    try {
+      check = await fetch(apiUrl(`/api/profiles/${encodeURIComponent(profile.id)}`), { headers: backendHeaders() });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`无法连接后端：${msg}`);
+    }
+    if (check.status !== 404 && !check.ok) {
+      const text = await check.text().catch(() => '');
+      throw new Error(text || `saveProfile precheck failed: ${check.status}`);
+    }
     const method = check.status === 404 ? 'POST' : 'PUT';
     const url = method === 'POST' ? apiUrl('/api/profiles') : apiUrl(`/api/profiles/${encodeURIComponent(profile.id)}`);
-    const res = await fetch(url, {
-      method,
-      headers: backendHeaders(),
-      body: JSON.stringify(profile),
-    });
-    if (!res.ok) throw new Error(`saveProfile failed: ${res.status}`);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: backendHeaders(),
+        body: JSON.stringify(profile),
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`无法连接后端：${msg}`);
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(text || `saveProfile failed: ${res.status}`);
+    }
     const saved = (await res.json()) as LifeProfile;
     localStorage.setItem(ACTIVE_PROFILE_ID_KEY, saved.id);
     return saved;
@@ -163,7 +182,13 @@ export const storage = {
 
     let isNew = !story.id || story.id <= 0;
     if (!isNew) {
-      const check = await fetch(apiUrl(`/api/stories/${encodeURIComponent(String(story.id))}`), { headers: backendHeaders() });
+      let check: Response;
+      try {
+        check = await fetch(apiUrl(`/api/stories/${encodeURIComponent(String(story.id))}`), { headers: backendHeaders() });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new Error(`无法连接后端：${msg}`);
+      }
       if (check.status === 404) {
         isNew = true;
       } else if (!check.ok) {
@@ -179,11 +204,17 @@ export const storage = {
     delete payload.id;
     delete payload.profileId;
 
-    const res = await fetch(url, {
-      method,
-      headers: backendHeaders(),
-      body: JSON.stringify(payload),
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: backendHeaders(),
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`无法连接后端：${msg}`);
+    }
     if (!res.ok) throw new Error(`saveStory failed: ${res.status}`);
     return (await res.json()) as LifeStory;
   },

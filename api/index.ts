@@ -47,6 +47,20 @@ type Database = {
           updated_at?: string;
         };
       };
+      stories: {
+        Row: {
+          id: number;
+          profile_id: string;
+          owner_key: string;
+          year: string | null;
+          tags: Json;
+          content: string;
+          embedding: unknown;
+          created_at: string | null;
+        };
+        Insert: never;
+        Update: never;
+      };
     };
   };
 };
@@ -445,6 +459,75 @@ export default async function handler(req: any, res: any) {
       const { data, error } = await (sb().from('profiles') as any).insert(payload).select('*').single();
       if (error) throw error;
       sendJson(res, 200, supabaseProfileToJson(data));
+      return;
+    }
+
+    if (method === 'POST' && path === '/api/rag/run') {
+      const body = await readBodyJson(req);
+      const userId = String(body.userId || '');
+      const userInput = String(body.userInput || '');
+      const topK = Number(body.topK || 3);
+      if (!userId || !userInput) {
+        sendJson(res, 400, { error: 'userId and userInput are required' });
+        return;
+      }
+
+      const inputEmbedding = await dashscopeEmbedding(userInput);
+      if (!inputEmbedding) {
+        sendJson(res, 500, { error: 'embedding is not configured' });
+        return;
+      }
+
+      const { data: profile, error: e1 } = await sb().from('profiles').select('id').eq('id', userId).eq('owner_key', userKey).maybeSingle();
+      if (e1) throw e1;
+      if (!profile) {
+        sendJson(res, 404, { error: 'profile not found' });
+        return;
+      }
+
+      const { data: rows, error } = await (sb().from('stories') as any)
+        .select('id, year, tags, content, embedding, created_at')
+        .eq('profile_id', userId)
+        .eq('owner_key', userKey)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+
+      const stories = (rows || []).map((r: any) => ({
+        id: Number(r.id),
+        year: r.year,
+        tags: r.tags ?? [],
+        content: String(r.content || ''),
+        embedding: parseVector(r.embedding),
+      }));
+
+      const scored = stories
+        .filter((s: any) => Array.isArray(s.embedding) && s.embedding.length === inputEmbedding.length)
+        .map((s: any) => ({
+          ...s,
+          score: cosineSimilarity(inputEmbedding, s.embedding as number[]),
+        }))
+        .sort((a: any, b: any) => b.score - a.score)
+        .slice(0, topK > 0 ? topK : 3);
+
+      const prompt = buildRagPrompt(userInput, scored);
+      const enhanced = await dashscopeChat(prompt);
+
+      sendJson(res, 200, {
+        original: userInput,
+        enhanced,
+        meta: {
+          totalStories: stories.length,
+          embeddedStories: stories.filter((s: any) => Array.isArray(s.embedding) && s.embedding.length === inputEmbedding.length).length,
+          embeddingDimensions: inputEmbedding.length,
+        },
+        relatedStories: scored.map((s: any) => ({
+          id: s.id,
+          year: s.year,
+          tags: s.tags,
+          content: s.content,
+          score: s.score,
+        })),
+      });
       return;
     }
 

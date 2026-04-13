@@ -1,6 +1,6 @@
 export default async function handler(req: any, res: any) {
   try {
-    const mod = await import('./app');
+    const mod = await import('../server/vercelApiHandler');
     return mod.default(req, res);
   } catch (e: any) {
     res.status(500).json({
@@ -12,4 +12,3 @@ export default async function handler(req: any, res: any) {
     });
   }
 }
-

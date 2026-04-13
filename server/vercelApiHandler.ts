@@ -1,7 +1,7 @@
 import express from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
-import { arkChatCompletion, arkCreateVideoTask, arkExtractVideoUrl, arkGetVideoTask } from '../server/ark';
+import { arkChatCompletion, arkCreateVideoTask, arkExtractVideoUrl, arkGetVideoTask } from './ark';
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));
@@ -173,9 +173,7 @@ function createSupabaseAdminClient() {
 let _supabase: ReturnType<typeof createSupabaseAdminClient> | null = null;
 
 function sb() {
-  if (!_supabase) {
-    _supabase = createSupabaseAdminClient();
-  }
+  if (!_supabase) _supabase = createSupabaseAdminClient();
   return _supabase;
 }
 
@@ -209,10 +207,7 @@ function supabaseStoryToJson(row: any) {
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({
-    ok: true,
-    git: process.env.VERCEL_GIT_COMMIT_SHA || null,
-  });
+  res.json({ ok: true, git: process.env.VERCEL_GIT_COMMIT_SHA || null });
 });
 
 app.get('/api/profiles', async (req, res) => {
@@ -604,7 +599,6 @@ app.post('/api/ai/video', async (req, res) => {
     }
     const prompt = String(req.body?.prompt || '');
     const aspectRatio = (req.body?.aspectRatio || '16:9') as '16:9' | '9:16';
-    const imageDataUrl = req.body?.imageDataUrl ? String(req.body.imageDataUrl) : undefined;
     if (!prompt) {
       res.status(400).json({ error: 'prompt is required' });
       return;
@@ -671,10 +665,7 @@ app.get('/api/ai/video/:id', async (req, res) => {
       return;
     }
     if (data.object_path && String(data.object_path).length > 0) {
-      const { data: signed, error: signError } = await sb()
-        .storage
-        .from(String(data.bucket))
-        .createSignedUrl(String(data.object_path), 60 * 10);
+      const { data: signed, error: signError } = await sb().storage.from(String(data.bucket)).createSignedUrl(String(data.object_path), 60 * 10);
       if (signError) throw signError;
       res.redirect(signed.signedUrl);
       return;

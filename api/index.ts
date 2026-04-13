@@ -173,7 +173,14 @@ function createSupabaseAdminClient() {
   });
 }
 
-const supabase = createSupabaseAdminClient();
+let _supabase: ReturnType<typeof createSupabaseAdminClient> | null = null;
+
+function sb() {
+  if (!_supabase) {
+    _supabase = createSupabaseAdminClient();
+  }
+  return _supabase;
+}
 
 function supabaseProfileToJson(row: any) {
   return {
@@ -215,7 +222,7 @@ app.get('/api/profiles', async (req, res) => {
       res.status(400).json({ error: 'missing x-user-key' });
       return;
     }
-    const { data, error } = await supabase.from('profiles').select('*').eq('owner_key', userKey).order('updated_at', { ascending: false });
+    const { data, error } = await sb().from('profiles').select('*').eq('owner_key', userKey).order('updated_at', { ascending: false });
     if (error) throw error;
     res.json((data || []).map(supabaseProfileToJson));
   } catch (e: any) {
@@ -230,7 +237,7 @@ app.get('/api/profiles/:id', async (req, res) => {
       res.status(400).json({ error: 'missing x-user-key' });
       return;
     }
-    const { data, error } = await supabase.from('profiles').select('*').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
+    const { data, error } = await sb().from('profiles').select('*').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
     if (error) throw error;
     if (!data) {
       res.status(404).json({ error: 'not found' });
@@ -268,7 +275,7 @@ app.post('/api/profiles', async (req, res) => {
       bio: String(body.bio || ''),
       updated_at: new Date().toISOString(),
     };
-    const { data, error } = await supabase.from('profiles').insert(payload).select('*').single();
+    const { data, error } = await sb().from('profiles').insert(payload).select('*').single();
     if (error) throw error;
     res.json(supabaseProfileToJson(data));
   } catch (e: any) {
@@ -295,7 +302,7 @@ app.put('/api/profiles/:id', async (req, res) => {
       bio: String(body.bio || ''),
       updated_at: new Date().toISOString(),
     };
-    const { data, error } = await supabase.from('profiles').update(payload).eq('id', req.params.id).eq('owner_key', userKey).select('*').single();
+    const { data, error } = await sb().from('profiles').update(payload).eq('id', req.params.id).eq('owner_key', userKey).select('*').single();
     if (error) throw error;
     res.json(supabaseProfileToJson(data));
   } catch (e: any) {
@@ -310,7 +317,7 @@ app.delete('/api/profiles/:id', async (req, res) => {
       res.status(400).json({ error: 'missing x-user-key' });
       return;
     }
-    const { error } = await supabase.from('profiles').delete().eq('id', req.params.id).eq('owner_key', userKey);
+    const { error } = await sb().from('profiles').delete().eq('id', req.params.id).eq('owner_key', userKey);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e: any) {
@@ -325,13 +332,13 @@ app.get('/api/profiles/:id/stories', async (req, res) => {
       res.status(400).json({ error: 'missing x-user-key' });
       return;
     }
-    const { data: profile, error: e1 } = await supabase.from('profiles').select('id').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
+    const { data: profile, error: e1 } = await sb().from('profiles').select('id').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
     if (e1) throw e1;
     if (!profile) {
       res.status(404).json({ error: 'profile not found' });
       return;
     }
-    const { data, error } = await supabase.from('stories').select('*').eq('profile_id', req.params.id).eq('owner_key', userKey).order('timestamp', { ascending: false });
+    const { data, error } = await sb().from('stories').select('*').eq('profile_id', req.params.id).eq('owner_key', userKey).order('timestamp', { ascending: false });
     if (error) throw error;
     res.json((data || []).map(supabaseStoryToJson));
   } catch (e: any) {
@@ -360,7 +367,7 @@ app.post('/api/profiles/:id/stories', async (req, res) => {
       res.status(400).json({ error: 'missing x-user-key' });
       return;
     }
-    const { data: profile, error: e1 } = await supabase.from('profiles').select('id').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
+    const { data: profile, error: e1 } = await sb().from('profiles').select('id').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
     if (e1) throw e1;
     if (!profile) {
       res.status(404).json({ error: 'profile not found' });
@@ -383,10 +390,10 @@ app.post('/api/profiles/:id/stories', async (req, res) => {
     if (embedding) payload.embedding = toVectorLiteral(embedding);
     let data: any = null;
     let error: any = null;
-    ({ data, error } = await supabase.from('stories').insert(payload).select('*').single());
+    ({ data, error } = await sb().from('stories').insert(payload).select('*').single());
     if (error && typeof error.message === 'string' && error.message.includes('embedding')) {
       delete payload.embedding;
-      ({ data, error } = await supabase.from('stories').insert(payload).select('*').single());
+      ({ data, error } = await sb().from('stories').insert(payload).select('*').single());
     }
     if (error) throw error;
     res.json(supabaseStoryToJson(data));
@@ -402,7 +409,7 @@ app.get('/api/stories/:id', async (req, res) => {
       res.status(400).json({ error: 'missing x-user-key' });
       return;
     }
-    const { data, error } = await supabase.from('stories').select('*').eq('id', Number(req.params.id)).eq('owner_key', userKey).maybeSingle();
+    const { data, error } = await sb().from('stories').select('*').eq('id', Number(req.params.id)).eq('owner_key', userKey).maybeSingle();
     if (error) throw error;
     if (!data) {
       res.status(404).json({ error: 'not found' });
@@ -426,7 +433,7 @@ app.put('/api/stories/:id', async (req, res) => {
       return;
     }
 
-    const { data: existing, error: e1 } = await supabase.from('stories').select('*').eq('id', id).eq('owner_key', userKey).maybeSingle();
+    const { data: existing, error: e1 } = await sb().from('stories').select('*').eq('id', id).eq('owner_key', userKey).maybeSingle();
     if (e1) throw e1;
     if (!existing) {
       res.status(404).json({ error: 'not found' });
@@ -452,10 +459,10 @@ app.put('/api/stories/:id', async (req, res) => {
 
     let data: any = null;
     let error: any = null;
-    ({ data, error } = await supabase.from('stories').update(next).eq('id', id).select('*').single());
+    ({ data, error } = await sb().from('stories').update(next).eq('id', id).select('*').single());
     if (error && typeof error.message === 'string' && error.message.includes('embedding')) {
       delete next.embedding;
-      ({ data, error } = await supabase.from('stories').update(next).eq('id', id).select('*').single());
+      ({ data, error } = await sb().from('stories').update(next).eq('id', id).select('*').single());
     }
     if (error) throw error;
     res.json(supabaseStoryToJson(data));
@@ -471,7 +478,7 @@ app.delete('/api/stories/:id', async (req, res) => {
       res.status(400).json({ error: 'missing x-user-key' });
       return;
     }
-    const { error } = await supabase.from('stories').delete().eq('id', Number(req.params.id)).eq('owner_key', userKey);
+    const { error } = await sb().from('stories').delete().eq('id', Number(req.params.id)).eq('owner_key', userKey);
     if (error) throw error;
     res.json({ ok: true });
   } catch (e: any) {
@@ -501,7 +508,7 @@ app.post('/api/rag/run', async (req, res) => {
       return;
     }
 
-    const { data: profile, error: e1 } = await supabase.from('profiles').select('id').eq('id', userId).eq('owner_key', userKey).maybeSingle();
+    const { data: profile, error: e1 } = await sb().from('profiles').select('id').eq('id', userId).eq('owner_key', userKey).maybeSingle();
     if (e1) throw e1;
     if (!profile) {
       res.status(404).json({ error: 'profile not found' });
@@ -632,7 +639,7 @@ app.post('/api/ai/video', async (req, res) => {
     if (!taskId) throw new Error('ark task id missing');
 
     const id = randomUUID();
-    const { error: insertError } = await supabase.from('ai_videos').insert({
+    const { error: insertError } = await sb().from('ai_videos').insert({
       id,
       owner_key: userKey,
       bucket: 'videos',
@@ -657,7 +664,7 @@ app.get('/api/ai/video/:id', async (req, res) => {
       res.status(400).json({ error: 'missing x-user-key' });
       return;
     }
-    const { data, error } = await supabase.from('ai_videos').select('*').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
+    const { data, error } = await sb().from('ai_videos').select('*').eq('id', req.params.id).eq('owner_key', userKey).maybeSingle();
     if (error) throw error;
     if (!data) {
       res.status(404).json({ error: 'not found' });
@@ -685,7 +692,7 @@ app.get('/api/ai/video/:id', async (req, res) => {
     const task = await arkGetVideoTask(taskId);
     const status = String((task as any)?.status || '');
     if (status !== String(data.status || '')) {
-      await supabase.from('ai_videos').update({ status }).eq('id', req.params.id);
+      await sb().from('ai_videos').update({ status }).eq('id', req.params.id);
     }
 
     if (status === 'failed') {
@@ -709,15 +716,15 @@ app.get('/api/ai/video/:id', async (req, res) => {
 
     const bucket = 'videos';
     const objectPath = `${req.params.id}.mp4`;
-    const { error: uploadError } = await supabase.storage.from(bucket).upload(objectPath, buf, {
+    const { error: uploadError } = await sb().storage.from(bucket).upload(objectPath, buf, {
       contentType: 'video/mp4',
       upsert: true,
     });
     if (uploadError) throw uploadError;
 
-    await supabase.from('ai_videos').update({ bucket, object_path: objectPath }).eq('id', req.params.id);
+    await sb().from('ai_videos').update({ bucket, object_path: objectPath }).eq('id', req.params.id);
 
-    const { data: signed, error: signError } = await supabase.storage.from(bucket).createSignedUrl(objectPath, 60 * 10);
+    const { data: signed, error: signError } = await sb().storage.from(bucket).createSignedUrl(objectPath, 60 * 10);
     if (signError) throw signError;
     res.redirect(signed.signedUrl);
   } catch (e: any) {

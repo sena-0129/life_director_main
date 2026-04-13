@@ -71,6 +71,12 @@ function sendJson(res: any, status: number, body: any) {
   res.end(JSON.stringify(body));
 }
 
+function redirect(res: any, location: string) {
+  res.statusCode = 302;
+  res.setHeader('location', location);
+  res.end();
+}
+
 function readBodyJson(req: any, limitBytes = 25 * 1024 * 1024) {
   return new Promise<any>((resolve, reject) => {
     let size = 0;
@@ -332,6 +338,12 @@ function findFirstUrl(obj: any): string | null {
 
 function arkExtractVideoUrl(taskResult: any) {
   return findFirstUrl(taskResult);
+}
+
+async function supabaseSignedUrl(bucket: string, objectPath: string) {
+  const { data, error } = await (sb().storage as any).from(bucket).createSignedUrl(objectPath, 60 * 10);
+  if (error) throw error;
+  return String(data.signedUrl);
 }
 
 function supabaseProfileToJson(row: any) {
@@ -658,6 +670,144 @@ export default async function handler(req: any, res: any) {
           score: s.score,
         })),
       });
+      return;
+    }
+
+    if (method === 'GET' && path === '/api/ai/videos') {
+      const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit') || 30)));
+      const { data, error } = await (sb().from('ai_videos') as any)
+        .select('id, status, created_at, bucket, object_path')
+        .eq('owner_key', userKey)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      sendJson(res, 200, {
+        items: (data || []).map((r: any) => ({
+          id: String(r.id),
+          status: String(r.status || ''),
+          createdAt: String(r.created_at || ''),
+          hasFile: Boolean(r.object_path && String(r.object_path).length > 0),
+          videoUrl: `/api/ai/video/${String(r.id)}`,
+        })),
+      });
+      return;
+    }
+
+    if (method === 'POST' && path === '/api/ai/video') {
+      const body = await readBodyJson(req);
+      const prompt = String(body.prompt || '');
+      const aspectRatio = String(body.aspectRatio || '16:9');
+      if (!prompt) {
+        sendJson(res, 400, { error: 'prompt is required' });
+        return;
+      }
+
+      const ark = getArkConfig();
+      if (!ark.apiKey) throw new Error('Missing env: ARK_API_KEY');
+
+      const scriptPrompt = [
+        '你是一位纪录片编导。请把“用户故事素材”改写成一段用于文生视频的中文提示词。',
+        '要求：',
+        '1) 怀旧纪实风格，温情但克制。',
+        '2) 只输出提示词正文，不要输出标题、解释、JSON。',
+        '3) 重点写画面、人物动作、镜头语言、光线、年代氛围；避免抽象说教。',
+        '4) 不要出现“你/您”。',
+        '',
+        `用户故事素材：\n${prompt}`,
+      ].join('\n');
+
+      const script = await arkChatCompletion({
+        model: ark.scriptModel,
+        messages: [
+          { role: 'system', content: '你是专业的视频提示词编导。' },
+          { role: 'user', content: scriptPrompt },
+        ],
+        temperature: 0.4,
+      });
+
+      const t2vPrompt = `${script} --resolution 720p --duration 8 --ratio ${aspectRatio}`;
+      const task = await arkCreateVideoTask({ model: ark.videoModel, prompt: t2vPrompt });
+      const taskId = String(task?.id || '');
+      if (!taskId) throw new Error('ark task id missing');
+
+      const id = randomUUID();
+      const { error } = await (sb().from('ai_videos') as any).insert({
+        id,
+        owner_key: userKey,
+        bucket: 'videos',
+        object_path: '',
+        ark_task_id: taskId,
+        status: String(task?.status || ''),
+        prompt: t2vPrompt,
+        script,
+      });
+      if (error) throw error;
+
+      sendJson(res, 200, { videoUrl: `/api/ai/video/${id}` });
+      return;
+    }
+
+    const mAiVideo = path.match(/^\/api\/ai\/video\/([^/]+)$/);
+    if (mAiVideo && method === 'GET') {
+      const id = decodeURIComponent(mAiVideo[1]);
+      const { data, error } = await (sb().from('ai_videos') as any).select('*').eq('id', id).eq('owner_key', userKey).maybeSingle();
+      if (error) throw error;
+      if (!data) {
+        sendJson(res, 404, { error: 'not found' });
+        return;
+      }
+
+      if (data.object_path && String(data.object_path).length > 0) {
+        const signedUrl = await supabaseSignedUrl(String(data.bucket), String(data.object_path));
+        redirect(res, signedUrl);
+        return;
+      }
+
+      const ark = getArkConfig();
+      if (!ark.apiKey) throw new Error('Missing env: ARK_API_KEY');
+
+      const taskId = String(data.ark_task_id || '');
+      if (!taskId) {
+        sendJson(res, 500, { error: 'missing task id' });
+        return;
+      }
+
+      const task = await arkGetVideoTask(taskId);
+      const status = String(task?.status || '');
+      if (status && status !== String(data.status || '')) {
+        await (sb().from('ai_videos') as any).update({ status }).eq('id', id);
+      }
+
+      if (status === 'failed') {
+        sendJson(res, 500, { error: 'video generation failed' });
+        return;
+      }
+      if (status !== 'succeeded') {
+        sendJson(res, 202, { status });
+        return;
+      }
+
+      const videoSourceUrl = arkExtractVideoUrl(task);
+      if (!videoSourceUrl) {
+        sendJson(res, 500, { error: 'video url missing' });
+        return;
+      }
+
+      const dl = await fetch(videoSourceUrl);
+      if (!dl.ok) throw new Error(`video download failed: ${dl.status}`);
+      const buf = Buffer.from(await dl.arrayBuffer());
+
+      const bucket = 'videos';
+      const objectPath = `${id}.mp4`;
+      const { error: uploadError } = await (sb().storage as any).from(bucket).upload(objectPath, buf, {
+        contentType: 'video/mp4',
+        upsert: true,
+      });
+      if (uploadError) throw uploadError;
+
+      await (sb().from('ai_videos') as any).update({ bucket, object_path: objectPath }).eq('id', id);
+      const signedUrl = await supabaseSignedUrl(bucket, objectPath);
+      redirect(res, signedUrl);
       return;
     }
 

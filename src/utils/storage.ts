@@ -215,7 +215,10 @@ export const storage = {
       const msg = e instanceof Error ? e.message : String(e);
       throw new Error(`无法连接后端：${msg}`);
     }
-    if (!res.ok) throw new Error(`saveStory failed: ${res.status}`);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(text || `saveStory failed: ${res.status}`);
+    }
     return (await res.json()) as LifeStory;
   },
   deleteStory: async (id: number): Promise<void> => {

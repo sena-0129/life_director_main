@@ -462,6 +462,136 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    const mProfileStories = path.match(/^\/api\/profiles\/([^/]+)\/stories$/);
+    if (mProfileStories && method === 'GET') {
+      const profileId = decodeURIComponent(mProfileStories[1]);
+      const { data: profile, error: e1 } = await sb().from('profiles').select('id').eq('id', profileId).eq('owner_key', userKey).maybeSingle();
+      if (e1) throw e1;
+      if (!profile) {
+        sendJson(res, 404, { error: 'profile not found' });
+        return;
+      }
+      const { data, error } = await (sb().from('stories') as any)
+        .select('*')
+        .eq('profile_id', profileId)
+        .eq('owner_key', userKey)
+        .order('timestamp', { ascending: false });
+      if (error) throw error;
+      sendJson(res, 200, (data || []).map(supabaseStoryToJson));
+      return;
+    }
+    if (mProfileStories && method === 'POST') {
+      const profileId = decodeURIComponent(mProfileStories[1]);
+      const { data: profile, error: e1 } = await sb().from('profiles').select('id').eq('id', profileId).eq('owner_key', userKey).maybeSingle();
+      if (e1) throw e1;
+      if (!profile) {
+        sendJson(res, 404, { error: 'profile not found' });
+        return;
+      }
+
+      const body = await readBodyJson(req);
+      const now = Date.now();
+      const title = String(body.title || '');
+      const stage = String(body.stage || '');
+      const year = String(body.year || '');
+      const age = Number(body.age || 0);
+      const emotion = String(body.emotion || 'neutral');
+      const tags = Array.isArray(body.tags) ? body.tags.map(String) : [];
+      const content = String(body.content || '');
+      const timestamp = Number(body.timestamp || now);
+      if (!title || !stage || !content) {
+        sendJson(res, 400, { error: 'title, stage, content are required' });
+        return;
+      }
+
+      const embedding = await dashscopeEmbedding(content);
+      const payload: any = {
+        profile_id: profileId,
+        owner_key: userKey,
+        title,
+        stage,
+        year,
+        age,
+        emotion,
+        tags,
+        content,
+        timestamp,
+        updated_at: new Date(now).toISOString(),
+      };
+      if (embedding) payload.embedding = toVectorLiteral(embedding);
+
+      let data: any = null;
+      let error: any = null;
+      ({ data, error } = await (sb().from('stories') as any).insert(payload).select('*').single());
+      if (error && typeof error.message === 'string' && error.message.includes('embedding')) {
+        delete payload.embedding;
+        ({ data, error } = await (sb().from('stories') as any).insert(payload).select('*').single());
+      }
+      if (error) throw error;
+      sendJson(res, 200, supabaseStoryToJson(data));
+      return;
+    }
+
+    const mStory = path.match(/^\/api\/stories\/([^/]+)$/);
+    if (mStory && method === 'GET') {
+      const id = Number(decodeURIComponent(mStory[1]));
+      const { data, error } = await (sb().from('stories') as any).select('*').eq('id', id).eq('owner_key', userKey).maybeSingle();
+      if (error) throw error;
+      if (!data) {
+        sendJson(res, 404, { error: 'not found' });
+        return;
+      }
+      sendJson(res, 200, supabaseStoryToJson(data));
+      return;
+    }
+    if (mStory && method === 'PUT') {
+      const id = Number(decodeURIComponent(mStory[1]));
+      const body = await readBodyJson(req);
+      const now = Date.now();
+
+      const { data: existing, error: e1 } = await (sb().from('stories') as any).select('*').eq('id', id).eq('owner_key', userKey).maybeSingle();
+      if (e1) throw e1;
+      if (!existing) {
+        sendJson(res, 404, { error: 'not found' });
+        return;
+      }
+
+      const nextContent = String(body.content ?? existing.content);
+      const contentChanged = nextContent !== String(existing.content);
+      const embedding = contentChanged ? await dashscopeEmbedding(nextContent) : null;
+
+      const next: any = {
+        title: String(body.title ?? existing.title),
+        stage: String(body.stage ?? existing.stage),
+        year: String(body.year ?? existing.year),
+        age: Number(body.age ?? existing.age),
+        emotion: String(body.emotion ?? existing.emotion),
+        tags: Array.isArray(body.tags) ? body.tags.map(String) : (existing.tags ?? []),
+        content: nextContent,
+        timestamp: Number(body.timestamp ?? existing.timestamp),
+        updated_at: new Date(now).toISOString(),
+        embedding: embedding ? toVectorLiteral(embedding) : existing.embedding,
+      };
+
+      let data: any = null;
+      let error: any = null;
+      ({ data, error } = await (sb().from('stories') as any).update(next).eq('id', id).select('*').single());
+      if (error && typeof error.message === 'string' && error.message.includes('embedding')) {
+        delete next.embedding;
+        ({ data, error } = await (sb().from('stories') as any).update(next).eq('id', id).select('*').single());
+      }
+      if (error) throw error;
+      sendJson(res, 200, supabaseStoryToJson(data));
+      return;
+    }
+    if (mStory && method === 'DELETE') {
+      const id = Number(decodeURIComponent(mStory[1]));
+      const { error } = await (sb().from('stories') as any).delete().eq('id', id).eq('owner_key', userKey);
+      if (error) throw error;
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
     if (method === 'POST' && path === '/api/rag/run') {
       const body = await readBodyJson(req);
       const userId = String(body.userId || '');

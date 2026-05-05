@@ -109,7 +109,28 @@ function readBodyJson(req: any, limitBytes = 25 * 1024 * 1024) {
 function requireEnv(name: string) {
   const v = process.env[name];
   if (!v || v.trim().length === 0) throw new Error(`Missing env: ${name}`);
-  return v;
+  return v.trim();
+}
+
+function validateSupabaseUrl(url: string) {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('SUPABASE_URL is invalid (must be a full https URL)');
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new Error('SUPABASE_URL must start with https://');
+  }
+  return parsed;
+}
+
+function validateSupabaseServiceRoleKey(key: string) {
+  const looksLikeJwt = key.startsWith('eyJ') && key.split('.').length === 3;
+  const looksLikeSecret = key.startsWith('sb_secret_');
+  if (!looksLikeJwt && !looksLikeSecret) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY looks invalid (use service_role secret)');
+  }
 }
 
 let _supabase: SupabaseClient<Database> | null = null;
@@ -117,7 +138,9 @@ function sb(): SupabaseClient<Database> {
   if (!_supabase) {
     const url = requireEnv('SUPABASE_URL');
     const key = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
-    _supabase = createClient<Database>(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+    const parsed = validateSupabaseUrl(url);
+    validateSupabaseServiceRoleKey(key);
+    _supabase = createClient<Database>(parsed.toString(), key, { auth: { persistSession: false, autoRefreshToken: false } });
   }
   return _supabase;
 }
@@ -816,6 +839,7 @@ export default async function handler(req: any, res: any) {
     sendJson(res, 500, {
       error: 'INTERNAL_ERROR',
       message: e?.message || String(e),
+      cause: e?.cause ? (e.cause?.message || String(e.cause)) : undefined,
       name: e?.name,
       stack: typeof e?.stack === 'string' ? e.stack.split('\n').slice(0, 10).join('\n') : undefined,
       git: process.env.VERCEL_GIT_COMMIT_SHA || null,

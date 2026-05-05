@@ -14,6 +14,8 @@ export function VideoStudioPage({ stories, initialSelectedId, onBack }: { storie
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [generateProgress, setGenerateProgress] = useState(0);
+  const [generateHint, setGenerateHint] = useState('');
   const [myVideos, setMyVideos] = useState<MyVideoItem[]>([]);
   const [isLoadingMyVideos, setIsLoadingMyVideos] = useState(false);
 
@@ -42,13 +44,18 @@ export function VideoStudioPage({ stories, initialSelectedId, onBack }: { storie
     if (selectedIds.length === 0) return;
     setIsGenerating(true);
     setErrorText(null);
+    setGenerateProgress(8);
+    setGenerateHint('生成需要一小会儿时间，请您耐心等待');
     
     const selectedStories = stories.filter(s => selectedIds.includes(s.id));
     const combinedContent = selectedStories.map(s => s.content).join('\n\n');
     const firstCover = undefined;
 
     try {
-      const url = await generateLifeVideo(combinedContent, firstCover, "9:16");
+      const url = await generateLifeVideo(combinedContent, firstCover, "9:16", (p, hint) => {
+        setGenerateProgress(p);
+        if (hint) setGenerateHint(hint);
+      });
       setVideoUrl(url);
       await refreshMyVideos();
     } catch (e) {
@@ -57,6 +64,8 @@ export function VideoStudioPage({ stories, initialSelectedId, onBack }: { storie
     }
     
     setIsGenerating(false);
+    setGenerateProgress(0);
+    setGenerateHint('');
   };
 
   if (isGenerating) {
@@ -76,7 +85,13 @@ export function VideoStudioPage({ stories, initialSelectedId, onBack }: { storie
           </div>
         </div>
         <h2 className="text-3xl font-serif mb-4 tracking-widest">正在为您拍摄人生片段...</h2>
-        <p className="text-[#8E867A] text-lg">AI导演正在剪辑您的专属记忆</p>
+        <p className="text-[#8E867A] text-lg mb-8">{generateHint || '生成需要一小会儿时间，请您耐心等待'}</p>
+        <div className="w-full max-w-sm">
+          <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+            <div className="h-full bg-[#FF8C42] transition-all" style={{ width: `${generateProgress}%` }} />
+          </div>
+          <div className="text-xs text-[#8E867A] mt-2">{generateProgress}%</div>
+        </div>
       </motion.div>
     );
   }

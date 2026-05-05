@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { ChevronLeft, Sparkles, History, User, Heart, Save } from 'lucide-react';
 import { LifeStory, Emotion } from '../types';
@@ -10,7 +10,18 @@ export function StoryConfirmPage({ story, onSave, onBack }: { story: Partial<Lif
   const [isSaving, setIsSaving] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [related, setRelated] = useState<RagRelatedStory[]>([]);
+  const [enhanceProgress, setEnhanceProgress] = useState(0);
+  const enhanceTimer = useRef<number | null>(null);
   const feedback = generateEmpathyFeedback(editedStory.emotion as Emotion);
+
+  useEffect(() => {
+    return () => {
+      if (enhanceTimer.current) {
+        window.clearInterval(enhanceTimer.current);
+        enhanceTimer.current = null;
+      }
+    };
+  }, []);
 
   return (
     <motion.div 
@@ -72,13 +83,31 @@ export function StoryConfirmPage({ story, onSave, onBack }: { story: Partial<Lif
           }
           if (isEnhancing) return;
           setIsEnhancing(true);
+          setEnhanceProgress(8);
+          if (enhanceTimer.current) {
+            window.clearInterval(enhanceTimer.current);
+            enhanceTimer.current = null;
+          }
+          enhanceTimer.current = window.setInterval(() => {
+            setEnhanceProgress((p) => {
+              if (p >= 90) return p;
+              const step = p < 30 ? 3 : p < 60 ? 2 : 1;
+              return Math.min(90, p + step);
+            });
+          }, 600);
           try {
             const r = await runRag(userId, userInput, 3);
             setEditedStory({ ...editedStory, content: r.enhanced });
             setRelated(r.relatedStories || []);
+            setEnhanceProgress(100);
           } catch (e: any) {
             window.alert(e?.message || '补全失败，请稍后重试');
           } finally {
+            if (enhanceTimer.current) {
+              window.clearInterval(enhanceTimer.current);
+              enhanceTimer.current = null;
+            }
+            window.setTimeout(() => setEnhanceProgress(0), 800);
             setIsEnhancing(false);
           }
         }}
@@ -87,6 +116,16 @@ export function StoryConfirmPage({ story, onSave, onBack }: { story: Partial<Lif
       >
         {isEnhancing ? '正在补全...' : '基于记忆补全'}
       </button>
+
+      {(isEnhancing || enhanceProgress > 0) && (
+        <div className="bg-white/70 border border-[#E6E0D5] rounded-2xl p-4 mb-6">
+          <div className="text-sm text-[#8E867A] mb-3">生成需要一小会儿时间，请您耐心等待</div>
+          <div className="h-2 rounded-full bg-[#E6E0D5] overflow-hidden">
+            <div className="h-full bg-[#FF8C42] transition-all" style={{ width: `${enhanceProgress}%` }} />
+          </div>
+          <div className="text-xs text-[#8E867A] mt-2">{enhanceProgress}%</div>
+        </div>
+      )}
 
       {related.length > 0 && (
         <div className="bg-white/70 border border-[#E6E0D5] rounded-2xl p-4 mb-6">

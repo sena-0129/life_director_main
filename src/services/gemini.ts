@@ -83,8 +83,15 @@ declare global {
   }
 }
 
-export async function generateLifeVideo(prompt: string, imageBase64?: string, aspectRatio: "16:9" | "9:16" = "16:9") {
+export async function generateLifeVideo(
+  prompt: string,
+  imageBase64?: string,
+  aspectRatio: "16:9" | "9:16" = "16:9",
+  onProgress?: (progress: number, hint?: string) => void,
+) {
   if (useBackend) {
+    onProgress?.(8, '生成需要一小会儿时间，请您耐心等待');
+    onProgress?.(12, '正在提交生成任务...');
     const res = await fetch(apiUrl('/api/ai/video'), {
       method: 'POST',
       headers: backendHeaders(),
@@ -95,16 +102,34 @@ export async function generateLifeVideo(prompt: string, imageBase64?: string, as
     const videoUrl = data.videoUrl as string | undefined;
     if (!videoUrl) return null;
 
+    onProgress?.(20, '任务已创建，正在生成视频...');
+    let progress = 20;
+
     const startedAt = Date.now();
     while (true) {
       const download = await fetch(apiUrl(videoUrl), { headers: backendHeaders() });
       if (download.status === 202) {
+        const statusBody = await download.json().catch(() => null as any);
+        const status = statusBody?.status ? String(statusBody.status) : '';
+
+        if (status) {
+          const s = status.toLowerCase();
+          if (s.includes('queue') || s.includes('pending')) progress = Math.max(progress, 28);
+          else if (s.includes('process') || s.includes('running')) progress = Math.max(progress, 55);
+          else progress = Math.max(progress, 35);
+          onProgress?.(Math.min(95, progress), `正在生成视频（${status}）...`);
+        } else {
+          progress = Math.min(95, progress + (progress < 60 ? 4 : 2));
+          onProgress?.(progress, '正在生成视频...');
+        }
         if (Date.now() - startedAt > 25 * 60 * 1000) throw new Error('Video generation timeout');
         await new Promise((r) => setTimeout(r, 5000));
         continue;
       }
       if (!download.ok) throw new Error(`Video download failed: ${download.status}`);
+      onProgress?.(95, '正在下载视频文件...');
       const blob = await download.blob();
+      onProgress?.(100, '已完成');
       return URL.createObjectURL(blob);
     }
   }
